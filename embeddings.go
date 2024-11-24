@@ -160,6 +160,11 @@ type EmbeddingRequest struct {
 	// Dimensions The number of dimensions the resulting output embeddings should have.
 	// Only supported in text-embedding-3 and later models.
 	Dimensions int `json:"dimensions,omitempty"`
+
+	// LateChunking to apply the late chunking technique to leverage the model's
+	// long-context capabilities for generating contextual
+	// chunk embeddings.
+	LateChunking bool `json:"late_chunking,omitempty"`
 }
 
 func (r EmbeddingRequest) Convert() EmbeddingRequest {
