@@ -154,7 +154,7 @@ const (
 
 type EmbeddingRequest struct {
 	Input          any                     `json:"input"`
-	Model          EmbeddingModel          `json:"model"`
+	Model          string                  `json:"model"`
 	User           string                  `json:"user,omitempty"`
 	EncodingFormat EmbeddingEncodingFormat `json:"encoding_format,omitempty"`
 	// Dimensions The number of dimensions the resulting output embeddings should have.
@@ -182,7 +182,7 @@ type EmbeddingRequestStrings struct {
 	Input []string `json:"input"`
 	// ID of the model to use. You can use the List models API to see all of your available models,
 	// or see our Model overview for descriptions of them.
-	Model EmbeddingModel `json:"model"`
+	Model string `json:"model"`
 	// A unique identifier representing your end-user, which will help OpenAI to monitor and detect abuse.
 	User string `json:"user"`
 	// EmbeddingEncodingFormat is the format of the embeddings data.
@@ -214,7 +214,7 @@ type EmbeddingRequestTokens struct {
 	Input [][]int `json:"input"`
 	// ID of the model to use. You can use the List models API to see all of your available models,
 	// or see our Model overview for descriptions of them.
-	Model EmbeddingModel `json:"model"`
+	Model string `json:"model"`
 	// A unique identifier representing your end-user, which will help OpenAI to monitor and detect abuse.
 	User string `json:"user"`
 	// EmbeddingEncodingFormat is the format of the embeddings data.
@@ -249,7 +249,7 @@ func (c *Client) CreateEmbeddings(
 	req, err := c.newRequest(
 		ctx,
 		http.MethodPost,
-		c.fullURL("/embeddings", withModel(string(baseReq.Model))),
+		c.fullURL("/embeddings", withModel(baseReq.Model)),
 		withBody(baseReq),
 	)
 	if err != nil {

@@ -2,6 +2,7 @@ package openai
 
 import (
 	"context"
+	"io"
 	"net/http"
 )
 
@@ -57,6 +58,7 @@ type ChatCompletionStreamResponse struct {
 	// When present, it contains a null value except for the last chunk which contains the token usage statistics
 	// for the entire request.
 	Usage *Usage `json:"usage,omitempty"`
+	Error error  `json:"-"`
 }
 
 // ChatCompletionStream
@@ -72,7 +74,7 @@ type ChatCompletionStream struct {
 func (c *Client) CreateChatCompletionStream(
 	ctx context.Context,
 	request ChatCompletionRequest,
-) (stream *ChatCompletionStream, err error) {
+) (resp ChatCompletionResponse, err error) {
 	urlSuffix := chatCompletionsSuffix
 	if !checkEndpointSupportsModel(urlSuffix, request.Model) {
 		err = ErrChatCompletionInvalidModel
@@ -91,15 +93,33 @@ func (c *Client) CreateChatCompletionStream(
 		withBody(request),
 	)
 	if err != nil {
-		return nil, err
+		return resp, err
 	}
 
-	resp, err := sendRequestStream[ChatCompletionStreamResponse](c, req)
+	s, err := sendRequestStream[ChatCompletionStreamResponse](c, req)
 	if err != nil {
-		return
+		return resp, err
 	}
-	stream = &ChatCompletionStream{
-		streamReader: resp,
-	}
-	return
+	resp.Stream = make(chan ChatCompletionStreamResponse, 1)
+	go func() {
+		defer close(resp.Stream)
+		for {
+			r, err := s.Recv()
+			switch err {
+			case nil:
+				resp.Stream <- r
+			case io.EOF:
+				return
+			default:
+				resp.Stream <- ChatCompletionStreamResponse{
+					Choices: []ChatCompletionStreamChoice{{
+						FinishReason: "error",
+					}},
+					Error: err,
+				}
+				return
+			}
+		}
+	}()
+	return resp, nil
 }
