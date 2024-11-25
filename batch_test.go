@@ -207,7 +207,7 @@ func TestUploadBatchFileRequest_AddEmbedding(t *testing.T) {
 			{
 				customerID: "req-2",
 				body: openai.EmbeddingRequest{
-					Model: openai.AdaEmbeddingV2,
+					Model: string(openai.AdaEmbeddingV2),
 					Input: []string{"Hello", "World"},
 				},
 			},

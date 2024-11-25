@@ -391,6 +391,9 @@ type ChatCompletionResponse struct {
 	SystemFingerprint   string                 `json:"system_fingerprint"`
 	PromptFilterResults []PromptFilterResult   `json:"prompt_filter_results,omitempty"`
 
+	// If non-nil, read until closed to consume the stream, including errors.
+	Stream chan ChatCompletionStreamResponse `json:"-"`
+
 	httpHeader
 }
 
@@ -400,8 +403,7 @@ func (c *Client) CreateChatCompletion(
 	request ChatCompletionRequest,
 ) (response ChatCompletionResponse, err error) {
 	if request.Stream {
-		err = ErrChatCompletionStreamNotSupported
-		return
+		return c.CreateChatCompletionStream(ctx, request)
 	}
 
 	urlSuffix := chatCompletionsSuffix
