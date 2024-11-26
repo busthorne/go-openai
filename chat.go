@@ -169,10 +169,15 @@ func (m *ChatCompletionMessage) UnmarshalJSON(bs []byte) error {
 		ToolCalls    []ToolCall        `json:"tool_calls,omitempty"`
 		ToolCallID   string            `json:"tool_call_id,omitempty"`
 	}{}
-	if err := json.Unmarshal(bs, &multiMsg); err != nil {
+	if err := json.Unmarshal(bs, &multiMsg); err == nil {
+		*m = ChatCompletionMessage(multiMsg)
+		return nil
+	}
+	// NVIDIA does this: [{"role":"assistant","content":"rewards"}]
+	if err := json.Unmarshal(bs[1:len(bs)-1], &msg); err != nil {
 		return err
 	}
-	*m = ChatCompletionMessage(multiMsg)
+	*m = ChatCompletionMessage(msg)
 	return nil
 }
 
