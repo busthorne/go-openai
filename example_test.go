@@ -39,7 +39,7 @@ func Example() {
 func ExampleClient_CreateChatCompletionStream() {
 	client := openai.NewClient(os.Getenv("OPENAI_API_KEY"))
 
-	stream, err := client.CreateChatCompletionStream(
+	resp, err := client.CreateChatCompletion(
 		context.Background(),
 		openai.ChatCompletionRequest{
 			Model:     openai.GPT3Dot5Turbo,
@@ -57,13 +57,10 @@ func ExampleClient_CreateChatCompletionStream() {
 		fmt.Printf("ChatCompletionStream error: %v\n", err)
 		return
 	}
-	defer stream.Close()
 
 	fmt.Print("Stream response: ")
-	for {
-		var response openai.ChatCompletionStreamResponse
-		response, err = stream.Recv()
-		if errors.Is(err, io.EOF) {
+	for resp := range resp.Stream {
+		if errors.Is(resp.Error, io.EOF) {
 			fmt.Println("\nStream finished")
 			return
 		}
@@ -73,7 +70,7 @@ func ExampleClient_CreateChatCompletionStream() {
 			return
 		}
 
-		fmt.Println(response.Choices[0].Delta.Content)
+		fmt.Println(resp.Choices[0].Delta.Content)
 	}
 }
 
