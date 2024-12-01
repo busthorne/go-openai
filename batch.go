@@ -3,6 +3,7 @@ package openai
 import (
 	"bytes"
 	"context"
+	"database/sql/driver"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -58,6 +59,21 @@ type Batch struct {
 	CancelledAt      int64              `json:"cancelled_at,omitempty"`
 	RequestCounts    BatchRequestCounts `json:"request_counts,omitempty"`
 	Metadata         map[string]any     `json:"metadata"`
+}
+
+func (b Batch) Value() (driver.Value, error)        { return json.Marshal(b) }
+func (b BatchInput) Value() (driver.Value, error)   { return json.Marshal(b) }
+func (b BatchOutput) Value() (driver.Value, error)  { return json.Marshal(b) }
+func (b *Batch) Scan(value interface{}) error       { return scanJSON(value, &b) }
+func (b *BatchInput) Scan(value interface{}) error  { return scanJSON(value, &b) }
+func (b *BatchOutput) Scan(value interface{}) error { return scanJSON(value, &b) }
+
+func scanJSON(value interface{}, target any) error {
+	bytes, ok := value.([]byte)
+	if !ok {
+		return fmt.Errorf("expected []byte, got %T", value)
+	}
+	return json.Unmarshal(bytes, target)
 }
 
 // BatchErrors is a group of errors.
@@ -226,7 +242,7 @@ type BatchInput struct {
 	Embedding      *EmbeddingRequest      `json:"-"`
 }
 
-func (r *BatchInput) MarshalJSON() (b []byte, err error) {
+func (r BatchInput) MarshalJSON() (b []byte, err error) {
 	if r.CustomID == "" {
 		return nil, errors.New("custom_id is required")
 	}
@@ -235,7 +251,7 @@ func (r *BatchInput) MarshalJSON() (b []byte, err error) {
 		Method    string          `json:"method"`
 		URL       BatchEndpoint   `json:"url"`
 		MaxTokens int             `json:"max_tokens,omitempty"`
-		Request   json.RawMessage `json:"request"`
+		Body      json.RawMessage `json:"body"`
 	}{
 		CustomID:  r.CustomID,
 		Method:    "POST",
@@ -243,19 +259,19 @@ func (r *BatchInput) MarshalJSON() (b []byte, err error) {
 	}
 	switch {
 	case r.Completion != nil:
-		req.Request, err = json.Marshal(r.Completion)
+		req.Body, err = json.Marshal(r.Completion)
 		req.URL = BatchEndpointCompletions
 	case r.ChatCompletion != nil:
-		req.Request, err = json.Marshal(r.ChatCompletion)
+		req.Body, err = json.Marshal(r.ChatCompletion)
 		req.URL = BatchEndpointChatCompletions
 	case r.Embedding != nil:
-		req.Request, err = json.Marshal(r.Embedding)
+		req.Body, err = json.Marshal(r.Embedding)
 		req.URL = BatchEndpointEmbeddings
 	default:
-		err = errors.New("no request fitting")
+		return nil, errors.New("no fitting body")
 	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("batch body: %w", err)
 	}
 	return json.Marshal(req)
 }
@@ -266,11 +282,11 @@ func (r *BatchInput) UnmarshalJSON(data []byte) error {
 		Method    string          `json:"method"`
 		URL       BatchEndpoint   `json:"url"`
 		MaxTokens int             `json:"max_tokens,omitempty"`
-		Request   json.RawMessage `json:"request"`
+		Request   json.RawMessage `json:"body"`
 	}
 	err := json.Unmarshal(data, &req)
 	if err != nil {
-		return err
+		return fmt.Errorf("batch content: %w", err)
 	}
 	*r = BatchInput{
 		CustomID:  req.CustomID,
@@ -286,7 +302,7 @@ func (r *BatchInput) UnmarshalJSON(data []byte) error {
 	case BatchEndpointEmbeddings:
 		err = json.Unmarshal(req.Request, &r.Embedding)
 	default:
-		err = errors.New("no request fitting")
+		err = errors.New("unsupported batch url")
 	}
 	return err
 }
@@ -312,9 +328,11 @@ type BatchOutput struct {
 	ChatCompletion *ChatCompletionResponse `json:"-"`
 	Embedding      *EmbeddingResponse      `json:"-"`
 	Error          *APIError               `json:"error,omitempty"`
+
+	response json.RawMessage `json:"-"`
 }
 
-func (r *BatchOutput) MarshalJSON() (b []byte, err error) {
+func (r BatchOutput) MarshalJSON() (b []byte, err error) {
 	if r.CustomID == "" {
 		return nil, errors.New("custom_id is required")
 	}
@@ -327,17 +345,28 @@ func (r *BatchOutput) MarshalJSON() (b []byte, err error) {
 		ID:       r.ID,
 		CustomID: r.CustomID,
 		Error:    r.Error,
+		Response: r.response,
 	}
+	if r.response != nil || r.Error != nil {
+		return json.Marshal(resp)
+	}
+
+	var blind = struct {
+		StatusCode int    `json:"status_code"`
+		RequestID  string `json:"request_id"`
+		Body       any    `json:"body"`
+	}{200, "", nil}
 	switch {
 	case r.Completion != nil:
-		resp.Response, err = json.Marshal(r.Completion)
+		blind.Body = r.Completion
 	case r.ChatCompletion != nil:
-		resp.Response, err = json.Marshal(r.ChatCompletion)
+		blind.Body = r.ChatCompletion
 	case r.Embedding != nil:
-		resp.Response, err = json.Marshal(r.Embedding)
+		blind.Body = r.Embedding
 	default:
-		err = errors.New("no response fitting")
+		return nil, errors.New("no response fitting")
 	}
+	resp.Response, err = json.Marshal(blind)
 	if err != nil {
 		return nil, err
 	}
@@ -355,20 +384,41 @@ func (r *BatchOutput) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	var blind struct {
-		Object string `json:"object"`
+	*r = BatchOutput{
+		ID:       resp.ID,
+		CustomID: resp.CustomID,
+		Error:    resp.Error,
+		response: resp.Response,
 	}
-	err = json.Unmarshal(resp.Response, &blind)
+
+	var blind struct {
+		Body struct {
+			Object string `json:"object"`
+		} `json:"body"`
+	}
+	err = json.Unmarshal(r.response, &blind)
 	if err != nil {
 		return err
 	}
-	switch blind.Object {
+	switch blind.Body.Object {
 	case "completion":
-		err = json.Unmarshal(resp.Response, &r.Completion)
+		var blind struct {
+			Body *CompletionResponse `json:"body"`
+		}
+		err = json.Unmarshal(r.response, &blind)
+		r.Completion = blind.Body
 	case "chat.completion":
-		err = json.Unmarshal(resp.Response, &r.ChatCompletion)
+		var blind struct {
+			Body *ChatCompletionResponse `json:"body"`
+		}
+		err = json.Unmarshal(r.response, &blind)
+		r.ChatCompletion = blind.Body
 	case "embedding":
-		err = json.Unmarshal(resp.Response, &r.Embedding)
+		var blind struct {
+			Body *EmbeddingResponse `json:"body"`
+		}
+		err = json.Unmarshal(r.response, &blind)
+		r.Embedding = blind.Body
 	default:
 		err = errors.New("no response fitting")
 	}
