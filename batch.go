@@ -291,6 +291,18 @@ func (r *BatchInput) UnmarshalJSON(data []byte) error {
 	return err
 }
 
+func (r *BatchInput) Model() string {
+	switch {
+	case r.Completion != nil:
+		return r.Completion.Model
+	case r.ChatCompletion != nil:
+		return r.ChatCompletion.Model
+	case r.Embedding != nil:
+		return r.Embedding.Model
+	}
+	return ""
+}
+
 // BatchOutput is the individual batch task (response).
 type BatchOutput struct {
 	// ID is set by the API.

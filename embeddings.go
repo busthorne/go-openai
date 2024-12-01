@@ -160,7 +160,26 @@ type EmbeddingRequest struct {
 	// Dimensions The number of dimensions the resulting output embeddings should have.
 	// Only supported in text-embedding-3 and later models.
 	Dimensions int `json:"dimensions,omitempty"`
-
+	// Task allows the provider to better fit the embedding to the task at hand.
+	//
+	// There's no specific type, because the task is provider-specific.
+	//
+	// Jina:
+	// * text-matching
+	// * classification
+	// * separation
+	// * retrieval.query
+	// * retrieval.passage
+	//
+	// Vertex:
+	// * SEMANTIC_SIMILARITY
+	// * CLASSIFICATION
+	// * CLUSTERING
+	// * RETRIEVAL_DOCUMENT
+	// * RETRIEVAL_QUERY
+	// * QUESTION_ANSWERING
+	// * FACT_VERIFICATION
+	Task string `json:"task,omitempty"`
 	// LateChunking to apply the late chunking technique to leverage the model's
 	// long-context capabilities for generating contextual
 	// chunk embeddings.
