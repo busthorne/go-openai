@@ -4,13 +4,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 )
 
 const batchesSuffix = "/batches"
 
+// BatchEndpoint is all the endpoints that can be used in a batch.
 type BatchEndpoint string
 
 const (
@@ -19,6 +22,7 @@ const (
 	BatchEndpointEmbeddings      BatchEndpoint = "/v1/embeddings"
 )
 
+// BatchStatus corresponds to all possible batch states.
 type BatchStatus string
 
 const (
@@ -32,46 +36,7 @@ const (
 	BatchStatusCancelled  BatchStatus = "cancelled"
 )
 
-type BatchLineItem interface {
-	MarshalBatchLineItem() []byte
-}
-
-type BatchChatCompletionRequest struct {
-	CustomID string                `json:"custom_id"`
-	Body     ChatCompletionRequest `json:"body"`
-	Method   string                `json:"method"`
-	URL      BatchEndpoint         `json:"url"`
-}
-
-func (r BatchChatCompletionRequest) MarshalBatchLineItem() []byte {
-	marshal, _ := json.Marshal(r)
-	return marshal
-}
-
-type BatchCompletionRequest struct {
-	CustomID string            `json:"custom_id"`
-	Body     CompletionRequest `json:"body"`
-	Method   string            `json:"method"`
-	URL      BatchEndpoint     `json:"url"`
-}
-
-func (r BatchCompletionRequest) MarshalBatchLineItem() []byte {
-	marshal, _ := json.Marshal(r)
-	return marshal
-}
-
-type BatchEmbeddingRequest struct {
-	CustomID string           `json:"custom_id"`
-	Body     EmbeddingRequest `json:"body"`
-	Method   string           `json:"method"`
-	URL      BatchEndpoint    `json:"url"`
-}
-
-func (r BatchEmbeddingRequest) MarshalBatchLineItem() []byte {
-	marshal, _ := json.Marshal(r)
-	return marshal
-}
-
+// Batch represents a Batch API descriptor.
 type Batch struct {
 	ID               string             `json:"id"`
 	Object           string             `json:"object"`
@@ -95,11 +60,13 @@ type Batch struct {
 	Metadata         map[string]any     `json:"metadata"`
 }
 
+// BatchErrors is a group of errors.
 type BatchErrors struct {
 	Object string       `json:"object,omitempty"`
 	Data   []BatchError `json:"data"`
 }
 
+// BatchError represents an error that occurred during batching.
 type BatchError struct {
 	Code    string `json:"code,omitempty"`
 	Message string `json:"message,omitempty"`
@@ -107,12 +74,14 @@ type BatchError struct {
 	Line    int    `json:"line,omitempty"`
 }
 
+// BatchRequestCounts provides statistics about the batch.
 type BatchRequestCounts struct {
 	Total     int `json:"total"`
 	Completed int `json:"completed"`
 	Failed    int `json:"failed"`
 }
 
+// CreateBatchRequest is the request to create a batch.
 type CreateBatchRequest struct {
 	InputFileID      string         `json:"input_file_id"`
 	Endpoint         BatchEndpoint  `json:"endpoint"`
@@ -125,7 +94,7 @@ type BatchResponse struct {
 	Batch
 }
 
-// CreateBatch — API call to Create batch.
+// CreateBatch creates a batch.
 func (c *Client) CreateBatch(
 	ctx context.Context,
 	request CreateBatchRequest,
@@ -143,90 +112,24 @@ func (c *Client) CreateBatch(
 	return
 }
 
-type UploadBatchFileRequest struct {
-	FileName string
-	Lines    []BatchLineItem
-}
-
-func (r *UploadBatchFileRequest) MarshalJSONL() []byte {
-	buff := bytes.Buffer{}
-	for i, line := range r.Lines {
-		if i != 0 {
-			buff.Write([]byte("\n"))
+// CreateFileBatch uploads a batch file.
+func (c *Client) CreateFileBatch(ctx context.Context, inputs []BatchInput) (File, error) {
+	var b bytes.Buffer
+	w := json.NewEncoder(&b)
+	for _, input := range inputs {
+		err := w.Encode(input)
+		if err != nil {
+			return File{}, err
 		}
-		buff.Write(line.MarshalBatchLineItem())
-	}
-	return buff.Bytes()
-}
-
-func (r *UploadBatchFileRequest) AddChatCompletion(customerID string, body ChatCompletionRequest) {
-	r.Lines = append(r.Lines, BatchChatCompletionRequest{
-		CustomID: customerID,
-		Body:     body,
-		Method:   "POST",
-		URL:      BatchEndpointChatCompletions,
-	})
-}
-
-func (r *UploadBatchFileRequest) AddCompletion(customerID string, body CompletionRequest) {
-	r.Lines = append(r.Lines, BatchCompletionRequest{
-		CustomID: customerID,
-		Body:     body,
-		Method:   "POST",
-		URL:      BatchEndpointCompletions,
-	})
-}
-
-func (r *UploadBatchFileRequest) AddEmbedding(customerID string, body EmbeddingRequest) {
-	r.Lines = append(r.Lines, BatchEmbeddingRequest{
-		CustomID: customerID,
-		Body:     body,
-		Method:   "POST",
-		URL:      BatchEndpointEmbeddings,
-	})
-}
-
-// UploadBatchFile — upload batch file.
-func (c *Client) UploadBatchFile(ctx context.Context, request UploadBatchFileRequest) (File, error) {
-	if request.FileName == "" {
-		request.FileName = "@batchinput.jsonl"
 	}
 	return c.CreateFileBytes(ctx, FileBytesRequest{
-		Name:    request.FileName,
-		Bytes:   request.MarshalJSONL(),
+		Name:    "batch.jsonl",
+		Bytes:   b.Bytes(),
 		Purpose: PurposeBatch,
 	})
 }
 
-type CreateBatchWithUploadFileRequest struct {
-	Endpoint         BatchEndpoint  `json:"endpoint"`
-	CompletionWindow string         `json:"completion_window"`
-	Metadata         map[string]any `json:"metadata"`
-	UploadBatchFileRequest
-}
-
-// CreateBatchWithUploadFile — API call to Create batch with upload file.
-func (c *Client) CreateBatchWithUploadFile(
-	ctx context.Context,
-	request CreateBatchWithUploadFileRequest,
-) (response BatchResponse, err error) {
-	var file File
-	file, err = c.UploadBatchFile(ctx, UploadBatchFileRequest{
-		FileName: request.FileName,
-		Lines:    request.Lines,
-	})
-	if err != nil {
-		return
-	}
-	return c.CreateBatch(ctx, CreateBatchRequest{
-		InputFileID:      file.ID,
-		Endpoint:         request.Endpoint,
-		CompletionWindow: request.CompletionWindow,
-		Metadata:         request.Metadata,
-	})
-}
-
-// RetrieveBatch — API call to Retrieve batch.
+// RetrieveBatch retrieves a batch.
 func (c *Client) RetrieveBatch(
 	ctx context.Context,
 	batchID string,
@@ -240,7 +143,7 @@ func (c *Client) RetrieveBatch(
 	return
 }
 
-// CancelBatch — API call to Cancel batch.
+// CancelBatch cancels a batch.
 func (c *Client) CancelBatch(
 	ctx context.Context,
 	batchID string,
@@ -254,6 +157,7 @@ func (c *Client) CancelBatch(
 	return
 }
 
+// ListBatchResponse is a paginated batch list.
 type ListBatchResponse struct {
 	httpHeader
 	Object  string  `json:"object"`
@@ -263,7 +167,7 @@ type ListBatchResponse struct {
 	HasMore bool    `json:"has_more"`
 }
 
-// ListBatch API call to List batch.
+// ListBatch returns batches in the account.
 func (c *Client) ListBatch(ctx context.Context, after *string, limit *int) (response ListBatchResponse, err error) {
 	urlValues := url.Values{}
 	if limit != nil {
@@ -285,4 +189,176 @@ func (c *Client) ListBatch(ctx context.Context, after *string, limit *int) (resp
 
 	err = c.sendRequest(req, &response)
 	return
+}
+
+// GetBatchContent returns the contents of a batch output file.
+func (c *Client) GetBatchContent(ctx context.Context, fileID string) ([]BatchOutput, error) {
+	f, err := c.GetFileContent(ctx, fileID)
+	if err != nil {
+		return nil, err
+	}
+	r := json.NewDecoder(f)
+
+	var outputs []BatchOutput
+	for {
+		var output BatchOutput
+
+		switch err := r.Decode(&output); err {
+		case nil:
+			outputs = append(outputs, output)
+		case io.EOF:
+			return outputs, nil
+		default:
+			return nil, err
+		}
+	}
+}
+
+// BatchInput is the individual batch task (request).
+type BatchInput struct {
+	// CustomID is set by the client.
+	CustomID       string                 `json:"custom_id"`
+	Method         string                 `json:"method"`
+	URL            BatchEndpoint          `json:"url"`
+	MaxTokens      int                    `json:"max_tokens,omitempty"`
+	Completion     *CompletionRequest     `json:"-"`
+	ChatCompletion *ChatCompletionRequest `json:"-"`
+	Embedding      *EmbeddingRequest      `json:"-"`
+}
+
+func (r *BatchInput) MarshalJSON() (b []byte, err error) {
+	if r.CustomID == "" {
+		return nil, errors.New("custom_id is required")
+	}
+	var req = struct {
+		CustomID  string          `json:"custom_id"`
+		Method    string          `json:"method"`
+		URL       BatchEndpoint   `json:"url"`
+		MaxTokens int             `json:"max_tokens,omitempty"`
+		Request   json.RawMessage `json:"request"`
+	}{
+		CustomID:  r.CustomID,
+		Method:    "POST",
+		MaxTokens: r.MaxTokens,
+	}
+	switch {
+	case r.Completion != nil:
+		req.Request, err = json.Marshal(r.Completion)
+		req.URL = BatchEndpointCompletions
+	case r.ChatCompletion != nil:
+		req.Request, err = json.Marshal(r.ChatCompletion)
+		req.URL = BatchEndpointChatCompletions
+	case r.Embedding != nil:
+		req.Request, err = json.Marshal(r.Embedding)
+		req.URL = BatchEndpointEmbeddings
+	default:
+		err = errors.New("no request fitting")
+	}
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(req)
+}
+
+func (r *BatchInput) UnmarshalJSON(data []byte) error {
+	var req struct {
+		CustomID  string          `json:"custom_id"`
+		Method    string          `json:"method"`
+		URL       BatchEndpoint   `json:"url"`
+		MaxTokens int             `json:"max_tokens,omitempty"`
+		Request   json.RawMessage `json:"request"`
+	}
+	err := json.Unmarshal(data, &req)
+	if err != nil {
+		return err
+	}
+	*r = BatchInput{
+		CustomID:  req.CustomID,
+		Method:    req.Method,
+		URL:       req.URL,
+		MaxTokens: req.MaxTokens,
+	}
+	switch req.URL {
+	case BatchEndpointCompletions:
+		err = json.Unmarshal(req.Request, &r.Completion)
+	case BatchEndpointChatCompletions:
+		err = json.Unmarshal(req.Request, &r.ChatCompletion)
+	case BatchEndpointEmbeddings:
+		err = json.Unmarshal(req.Request, &r.Embedding)
+	default:
+		err = errors.New("no request fitting")
+	}
+	return err
+}
+
+// BatchOutput is the individual batch task (response).
+type BatchOutput struct {
+	// ID is set by the API.
+	ID             string                  `json:"id"`
+	CustomID       string                  `json:"custom_id"`
+	Completion     *CompletionResponse     `json:"-"`
+	ChatCompletion *ChatCompletionResponse `json:"-"`
+	Embedding      *EmbeddingResponse      `json:"-"`
+	Error          *APIError               `json:"error,omitempty"`
+}
+
+func (r *BatchOutput) MarshalJSON() (b []byte, err error) {
+	if r.CustomID == "" {
+		return nil, errors.New("custom_id is required")
+	}
+	var resp = struct {
+		ID       string          `json:"id"`
+		CustomID string          `json:"custom_id"`
+		Error    *APIError       `json:"error,omitempty"`
+		Response json.RawMessage `json:"response"`
+	}{
+		ID:       r.ID,
+		CustomID: r.CustomID,
+		Error:    r.Error,
+	}
+	switch {
+	case r.Completion != nil:
+		resp.Response, err = json.Marshal(r.Completion)
+	case r.ChatCompletion != nil:
+		resp.Response, err = json.Marshal(r.ChatCompletion)
+	case r.Embedding != nil:
+		resp.Response, err = json.Marshal(r.Embedding)
+	default:
+		err = errors.New("no response fitting")
+	}
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(resp)
+}
+
+func (r *BatchOutput) UnmarshalJSON(data []byte) error {
+	var resp struct {
+		ID       string          `json:"id"`
+		CustomID string          `json:"custom_id"`
+		Error    *APIError       `json:"error,omitempty"`
+		Response json.RawMessage `json:"response"`
+	}
+	err := json.Unmarshal(data, &resp)
+	if err != nil {
+		return err
+	}
+	var blind struct {
+		Object string `json:"object"`
+	}
+	err = json.Unmarshal(resp.Response, &blind)
+	if err != nil {
+		return err
+	}
+	switch blind.Object {
+	case "completion":
+		err = json.Unmarshal(resp.Response, &r.Completion)
+	case "chat.completion":
+		err = json.Unmarshal(resp.Response, &r.ChatCompletion)
+	case "embedding":
+		err = json.Unmarshal(resp.Response, &r.Embedding)
+	default:
+		err = errors.New("no response fitting")
+	}
+	return err
 }
