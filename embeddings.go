@@ -4,9 +4,13 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
+	"net/url"
+	"strings"
 )
 
 var ErrVectorLengthMismatch = errors.New("vector length mismatch")
@@ -137,11 +141,6 @@ func (r *EmbeddingResponseBase64) ToEmbeddingResponse() (EmbeddingResponse, erro
 	}, nil
 }
 
-type EmbeddingRequestConverter interface {
-	// Needs to be of type EmbeddingRequestStrings or EmbeddingRequestTokens
-	Convert() EmbeddingRequest
-}
-
 // EmbeddingEncodingFormat is the format of the embeddings data.
 // Currently, only "float" and "base64" are supported, however, "base64" is not officially documented.
 // If not specified OpenAI will use "float".
@@ -152,8 +151,73 @@ const (
 	EmbeddingEncodingFormatBase64 EmbeddingEncodingFormat = "base64"
 )
 
+type EmbeddingInput struct {
+	Text string `json:"text,omitempty"`
+	// Image is either a base64 encoded image, or a URL.
+	Image string `json:"image,omitempty"`
+	// Tokens is a slice of ints for which you want to generate an Embedding vector.
+	// Each input must not exceed 8192 tokens in length.
+	Tokens []int `json:"tokens,omitempty"`
+}
+
+type EmbeddingInputs []EmbeddingInput
+
+func (m EmbeddingInputs) Multimodal() (ok bool, err error) {
+	for i, input := range m {
+		s := input.Image
+		if s == "" {
+			if input.Text == "" {
+				return ok, fmt.Errorf("%w: neither text, nor image at position %d", ErrEmbeddingInput, i)
+			}
+			continue
+		}
+		ok = true
+
+		var faults []string
+
+		if _, berr := base64.StdEncoding.DecodeString(s); berr != nil {
+			faults = append(faults, "not base64 image")
+		}
+		if _, uerr := url.Parse(s); uerr != nil {
+			faults = append(faults, "not url")
+		}
+		if faults != nil {
+			return ok, fmt.Errorf("%w: at position %d: %s",
+				ErrEmbeddingInput,
+				i,
+				strings.Join(faults, ", "))
+		}
+	}
+	return ok, nil
+}
+
+func (m EmbeddingInputs) MarshalJSON() ([]byte, error) {
+	switch {
+	case len(m) == 0:
+		return nil, fmt.Errorf("no inputs")
+	case m[0].Tokens != nil:
+		mm := make([][]int, len(m))
+		for i, input := range m {
+			mm[i] = input.Tokens
+		}
+		return json.Marshal(mm)
+	}
+	ok, err := m.Multimodal()
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		return json.Marshal([]EmbeddingInput(m))
+	}
+	var inputs []string
+	for _, input := range m {
+		inputs = append(inputs, input.Text)
+	}
+	return json.Marshal(inputs)
+}
+
 type EmbeddingRequest struct {
-	Input          any                     `json:"input"`
+	Input          EmbeddingInputs         `json:"input"`
 	Model          string                  `json:"model"`
 	User           string                  `json:"user,omitempty"`
 	EncodingFormat EmbeddingEncodingFormat `json:"encoding_format,omitempty"`
@@ -186,75 +250,6 @@ type EmbeddingRequest struct {
 	LateChunking bool `json:"late_chunking,omitempty"`
 }
 
-func (r EmbeddingRequest) Convert() EmbeddingRequest {
-	return r
-}
-
-// EmbeddingRequestStrings is the input to a create embeddings request with a slice of strings.
-type EmbeddingRequestStrings struct {
-	// Input is a slice of strings for which you want to generate an Embedding vector.
-	// Each input must not exceed 8192 tokens in length.
-	// OpenAPI suggests replacing newlines (\n) in your input with a single space, as they
-	// have observed inferior results when newlines are present.
-	// E.g.
-	//	"The food was delicious and the waiter..."
-	Input []string `json:"input"`
-	// ID of the model to use. You can use the List models API to see all of your available models,
-	// or see our Model overview for descriptions of them.
-	Model string `json:"model"`
-	// A unique identifier representing your end-user, which will help OpenAI to monitor and detect abuse.
-	User string `json:"user"`
-	// EmbeddingEncodingFormat is the format of the embeddings data.
-	// Currently, only "float" and "base64" are supported, however, "base64" is not officially documented.
-	// If not specified OpenAI will use "float".
-	EncodingFormat EmbeddingEncodingFormat `json:"encoding_format,omitempty"`
-	// Dimensions The number of dimensions the resulting output embeddings should have.
-	// Only supported in text-embedding-3 and later models.
-	Dimensions int `json:"dimensions,omitempty"`
-}
-
-func (r EmbeddingRequestStrings) Convert() EmbeddingRequest {
-	return EmbeddingRequest{
-		Input:          r.Input,
-		Model:          r.Model,
-		User:           r.User,
-		EncodingFormat: r.EncodingFormat,
-		Dimensions:     r.Dimensions,
-	}
-}
-
-type EmbeddingRequestTokens struct {
-	// Input is a slice of slices of ints ([][]int) for which you want to generate an Embedding vector.
-	// Each input must not exceed 8192 tokens in length.
-	// OpenAPI suggests replacing newlines (\n) in your input with a single space, as they
-	// have observed inferior results when newlines are present.
-	// E.g.
-	//	"The food was delicious and the waiter..."
-	Input [][]int `json:"input"`
-	// ID of the model to use. You can use the List models API to see all of your available models,
-	// or see our Model overview for descriptions of them.
-	Model string `json:"model"`
-	// A unique identifier representing your end-user, which will help OpenAI to monitor and detect abuse.
-	User string `json:"user"`
-	// EmbeddingEncodingFormat is the format of the embeddings data.
-	// Currently, only "float" and "base64" are supported, however, "base64" is not officially documented.
-	// If not specified OpenAI will use "float".
-	EncodingFormat EmbeddingEncodingFormat `json:"encoding_format,omitempty"`
-	// Dimensions The number of dimensions the resulting output embeddings should have.
-	// Only supported in text-embedding-3 and later models.
-	Dimensions int `json:"dimensions,omitempty"`
-}
-
-func (r EmbeddingRequestTokens) Convert() EmbeddingRequest {
-	return EmbeddingRequest{
-		Input:          r.Input,
-		Model:          r.Model,
-		User:           r.User,
-		EncodingFormat: r.EncodingFormat,
-		Dimensions:     r.Dimensions,
-	}
-}
-
 // CreateEmbeddings returns an EmbeddingResponse which will contain an Embedding for every item in |body.Input|.
 // https://beta.openai.com/docs/api-reference/embeddings/create
 //
@@ -262,9 +257,8 @@ func (r EmbeddingRequestTokens) Convert() EmbeddingRequest {
 // for embedding groups of text already converted to tokens.
 func (c *Client) CreateEmbeddings(
 	ctx context.Context,
-	conv EmbeddingRequestConverter,
+	baseReq EmbeddingRequest,
 ) (res EmbeddingResponse, err error) {
-	baseReq := conv.Convert()
 	req, err := c.newRequest(
 		ctx,
 		http.MethodPost,

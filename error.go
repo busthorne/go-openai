@@ -2,8 +2,13 @@ package openai
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
+)
+
+var (
+	ErrEmbeddingInput = errors.New("invalid embedding input")
 )
 
 // APIError provides error information returned by the OpenAI API.
