@@ -380,9 +380,9 @@ type ChatCompletionChoice struct {
 	// function_call: The model decided to call a function
 	// content_filter: Omitted content due to a flag from our content filters
 	// null: API response still in progress or incomplete
-	FinishReason         FinishReason         `json:"finish_reason"`
-	LogProbs             *LogProbs            `json:"logprobs,omitempty"`
-	ContentFilterResults ContentFilterResults `json:"content_filter_results,omitempty"`
+	FinishReason         FinishReason          `json:"finish_reason"`
+	LogProbs             *LogProbs             `json:"logprobs,omitempty"`
+	ContentFilterResults *ContentFilterResults `json:"content_filter_results,omitempty"`
 }
 
 // ChatCompletionResponse represents a response structure for chat completion API.
