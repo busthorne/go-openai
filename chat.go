@@ -215,15 +215,8 @@ const (
 )
 
 type ChatCompletionResponseFormat struct {
-	Type       ChatCompletionResponseFormatType        `json:"type,omitempty"`
-	JSONSchema *ChatCompletionResponseFormatJSONSchema `json:"json_schema,omitempty"`
-}
-
-type ChatCompletionResponseFormatJSONSchema struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description,omitempty"`
-	Schema      json.Marshaler `json:"schema"`
-	Strict      bool           `json:"strict"`
+	Type       ChatCompletionResponseFormatType `json:"type,omitempty"`
+	JSONSchema json.RawMessage                  `json:"json_schema,omitempty"`
 }
 
 // ChatCompletionRequest represents a request structure for chat completion API.
