@@ -248,6 +248,10 @@ type EmbeddingRequest struct {
 	// long-context capabilities for generating contextual
 	// chunk embeddings.
 	LateChunking bool `json:"late_chunking,omitempty"`
+	// Truncate to maximum model output
+	Truncate bool `json:"truncate,omitempty"`
+	// L2 normalization
+	Normalized bool `json:"normalized,omitempty"`
 }
 
 // CreateEmbeddings returns an EmbeddingResponse which will contain an Embedding for every item in |body.Input|.
